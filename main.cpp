@@ -18,6 +18,7 @@ int main() {
             break;
         }
         else if (input == "history") {
+
             std::ifstream historyOutput(historyPath);
             std::string line;
             while (std::getline(historyOutput, line)) {
@@ -25,9 +26,19 @@ int main() {
             }
             historyOutput.close();
         }
-        else if (!input.empty()) {
-            std::cout << input << "\n";
+        else if (input.find("echo ") == 0) {
+            
+            std::string text = input.substr(5);
 
+            std::cout << text << "\n";
+
+
+            std::ofstream history(historyPath, std::ios::app);
+            history << input << "\n";
+            history.close();
+        }
+
+        else if (!input.empty()) {
             std::ofstream history(historyPath, std::ios::app);
             history << input << "\n";
             history.close();
