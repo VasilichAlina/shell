@@ -1,6 +1,11 @@
 ﻿#include <iostream>
 #include <string>
 #include <fstream>
+#include <vector>
+#include <sstream>
+#include <unistd.h>
+
+#include <sys/wait.h>
 
 int main() {
     std::cout << std::unitbuf;
@@ -14,9 +19,16 @@ int main() {
     std::cout << "$ ";
 
     while (std::getline(std::cin, input)) {
+        if (!input.empty()) {
+            std::ofstream history(historyPath, std::ios::app);
+            history << input << "\n";
+            history.close();
+        }
+
         if (input == "\\q") {
             break;
         }
+
         else if (input == "history") {
             std::ifstream historyOutput(historyPath);
             std::string line;
@@ -28,10 +40,6 @@ int main() {
         else if (input.find("echo ") == 0) {
             std::string text = input.substr(5);
             std::cout << text << "\n";
-
-            std::ofstream history(historyPath, std::ios::app);
-            history << input << "\n";
-            history.close();
         }
         else if (input.find("\\e ") == 0) {
             std::string var_name = input.substr(3);
@@ -60,12 +68,7 @@ int main() {
                 value = home;
             }
             else {
-                std::cout << "Переменная '" << var_name << "' не найдена\n";
-
-                std::ofstream history(historyPath, std::ios::app);
-                history << input << "\n";
-                history.close();
-
+                std::cout << "Variable '" << var_name << "' not found\n";
                 std::cout << "$ ";
                 continue;
             }
@@ -84,19 +87,45 @@ int main() {
             else {
                 std::cout << value << "\n";
             }
-
-            std::ofstream history(historyPath, std::ios::app);
-            history << input << "\n";
-            history.close();
         }
         else if (!input.empty()) {
-            std::cout << input << ": command not found\n";
+            std::vector<std::string> tokens;
+            std::istringstream iss(input);
+            std::string token;
 
-            std::ofstream history(historyPath, std::ios::app);
-            history << input << "\n";
-            history.close();
+            while (iss >> token) {
+                tokens.push_back(token);
+            }
+
+            if (tokens.empty()) {
+                std::cout << "$ ";
+                continue;
+            }
+
+            pid_t pid = fork();
+
+            if (pid == 0) {
+                std::vector<char*> args;
+                for (auto& t : tokens) {
+                    args.push_back(const_cast<char*>(t.c_str()));
+                }
+                args.push_back(nullptr);  
+
+                execvp(args[0], args.data());
+
+                std::cerr << tokens[0] << ": command not found\n";
+                exit(1);
+            }
+            else if (pid > 0) {
+                int status;
+                waitpid(pid, &status, 0);  
+            }
+            else {
+                std::cerr << " error when creating the process\n";
+            }
         }
 
         std::cout << "$ ";
     }
+
 }
