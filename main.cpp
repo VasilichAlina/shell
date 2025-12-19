@@ -1,131 +1,209 @@
 ﻿#include <iostream>
 #include <string>
 #include <fstream>
-#include <vector>
-#include <sstream>
 #include <unistd.h>
-
 #include <sys/wait.h>
+#include <unistd.h>//unitbuf
+#include <sys/wait.h>//Для waitpid
+#include <vector>
+#include<sstream>
+#include<sstream>//Для iss
+#include<signal.h>//Работа с сигналами
 
-int main() {
+
+//Функция для обработки сигнала
+void sighup_handler(int signal_nubmer)
+{
+    //Если получаем номер SIGHUP(обычно 1)
+    if (signal_nubmer == SIGHUP)
+    {
+        std::cout << "Configuration reloaded\n";
+        std::cout << "$ ";
+    }
+}
+
+
+int main()
+{
+
     std::cout << std::unitbuf;
     std::cerr << std::unitbuf;
 
-    std::string home = "/home/vboxuser";
-    std::string historyPath = home + "/.kubsh_history";
+
+
+    //std::cout << "$ ";
+    //std::cout << "$ \n";
+
+
+    //Сохранение пути в переменную для истории
+    const char* home = std::getenv("HOME");
+    std::string historyPath = std::string(home) + "/.kubsh_history";
+
+
 
     std::string input;
 
-    std::cout << "$ ";
+    //Если приходит сигнал с номером SIGHUP то вызываем sighup_handler
+    signal(SIGHUP, sighup_handler);
 
-    while (std::getline(std::cin, input)) {
-        if (!input.empty()) {
-            std::ofstream history(historyPath, std::ios::app);
+    while (std::getline(std::cin, input))
+    {
+        //Запись в историю
+        if (!input.empty())
+        {
+            std::ofstream history(historyPath, std::ios::app);//Открываем в режиме добавления
             history << input << "\n";
-            history.close();
         }
 
-        if (input == "\\q") {
-            break;
-        }
 
-        else if (input == "history") {
+        //history
+        if (input == "history")
+        {
+            //Читаем из файла который в historyPath пока не закончатся строки
             std::ifstream historyOutput(historyPath);
             std::string line;
-            while (std::getline(historyOutput, line)) {
+            while (std::getline(historyOutput, line))
+            {
                 std::cout << line << "\n";
             }
-            historyOutput.close();
         }
-        else if (input.find("echo ") == 0) {
-            std::string text = input.substr(5);
-            std::cout << text << "\n";
+
+
+        //  \q
+        else if (input == "\\q")
+        {
+            break;
         }
-        else if (input.find("\\e ") == 0) {
-            std::string var_name = input.substr(3);
-            bool show_as_list = false;
+    }
 
-            if (var_name.find(" list") != std::string::npos) {
-                show_as_list = true;
-                var_name = var_name.substr(0, var_name.size() - 5);
-            }
 
-            std::string value;
+    //  echo
+    //Если начинаем debug '
+    // заканчиваем ', считываем с открытия апострофа до закрытия
+        else if (input.substr(0, 7) == "debug '" && input[input.length() - 1] == '\'')
+        {
 
-            if (var_name == "HOME") {
-                value = "/home/vboxuser";
-            }
-            else if (var_name == "PATH") {
-                value = "/usr/local/bin:/usr/bin:/bin:/usr/games";
-            }
-            else if (var_name == "USER") {
-                value = "vboxuser";
-            }
-            else if (var_name == "SHELL") {
-                value = "/bin/bash";
-            }
-            else if (var_name == "PWD") {
-                value = home;
-            }
-            else {
-                std::cout << "Variable '" << var_name << "' not found\n";
-                std::cout << "$ ";
-                continue;
-            }
+            std::cout << input.substr(7, input.length() - 8) << std::endl;
+            std::cout << input.substr(7, input.length() - 8) << std::endl;
+            continue;
 
-            if (show_as_list) {
-                size_t start = 0;
-                size_t end = value.find(':');
+        }
 
-                while (end != std::string::npos) {
-                    std::cout << value.substr(start, end - start) << "\n";
-                    start = end + 1;
-                    end = value.find(':', start);
+
+
+        //   \e $
+        else if (input.substr(0, 4) == "\\e $")
+        {
+            std::string varName = input.substr(4);
+            const char* value = std::getenv(varName.c_str());//Преобразуем C-строку в C++ строку
+
+            if (value != nullptr)
+            {
+                std::string valueStr = value;
+
+                bool has_colon = false;//Флаг для проверки наличия двоеточий
+                for (char c : valueStr)//Проходим по символам из строки
+                {
+                    if (c == ':')
+                    {
+                        has_colon = true;
+                        break;
+                    }
                 }
-                std::cout << value.substr(start) << "\n";
-            }
-            else {
-                std::cout << value << "\n";
-            }
-        }
-        else if (!input.empty()) {
-            std::vector<std::string> tokens;
-            std::istringstream iss(input);
-            std::string token;
 
-            while (iss >> token) {
-                tokens.push_back(token);
+                if (has_colon)
+                {
+                    std::string current_part = "";//Временная строка для накопления текущей части пути
+                    for (char c : valueStr)//Разбиваем строку по двоеточиям
+
+                    {
+                        if (c == ':')
+                        {
+                            std::cout << current_part << "\n";//Когда встречаем двоеточие - выводим накопленную часть
+                            current_part = "";//Сбрасываем временную строку для следующей части
+                        }
+                        else
+                        {
+                            current_part += c;//Иначе добавляем символ к строке
+
+                        }
+                    }
+                    std::cout << current_part << "\n";//Выводим последнюю часть (после последнего двоеточия)
+                }
+                else
+                {
+                    std::cout << valueStr << "\n";//Если двоеточий нет - просто выводим значение как есть
+                }
+            }
+            else
+            {
+                std::cout << varName << ": не найдено\n";
+            }
+            continue;
             }
 
-            if (tokens.empty()) {
-                std::cout << "$ ";
-                continue;
-            }
-
+        else
+        {
+            //Создаем процесс и записываем process id
             pid_t pid = fork();
 
-            if (pid == 0) {
+            //Если дочерний процесс(в нем выполним бинарник)
+            if (pid == 0)
+            {
+                // Создаем копии строк для аргументов
+                std::vector<std::string> tokens;
+                //Указатели для execvp
                 std::vector<char*> args;
-                for (auto& t : tokens) {
+                std::string token;
+                //Разбиваем по пробелам для аргументов
+                std::istringstream iss(input);
+
+                while (iss >> token)
+                {
+                    tokens.push_back(token);  // сохраняем копии
+                    tokens.push_back(token);  // Сохраняем копии
+                }
+
+                // Преобразуем в char*
+                for (auto& t : tokens)
+                {
                     args.push_back(const_cast<char*>(t.c_str()));
                 }
-                args.push_back(nullptr);  
+                //Для execvp чтобы видел конец
+                args.push_back(nullptr);
 
+                std::cout << "DEBUG: Executing: ";
+                for (int i = 0; args[i] != nullptr; i++)
+                {
+                    std::cout << "[" << args[i] << "] ";
+                }
+                std::cout << "\n";
+
+                //Заменяем программу на новую
+                //args[0] - название команды, args.data() - ссылка на C массив строк для аргументов
                 execvp(args[0], args.data());
 
-                std::cerr << tokens[0] << ": command not found\n";
+                //Если не нашли команду то выведет это(вернет управление), при успехе не дойдем до этих строк
+                std::cout << args[0] << ": command not found\n";
                 exit(1);
-            }
-            else if (pid > 0) {
-                int status;
-                waitpid(pid, &status, 0);  
-            }
-            else {
-                std::cerr << " error when creating the process\n";
-            }
-        }
 
-        std::cout << "$ ";
-    }
+            }
+            else if (pid > 0)
+            {
+                int status;
+                //Ожидаем дочерний
+                waitpid(pid, &status, 0);
+            }
+            else
+            {
+                std::cerr << "Failed to create process\n";
+            }
+            }
+
+            //else std::cout<<input<<": command not found\n";
+
+
+            //std::cout<<"$ ";
+            std::cout << "$ ";
 
 }
