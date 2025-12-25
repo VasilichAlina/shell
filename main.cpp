@@ -1,56 +1,51 @@
 ﻿#include <iostream>
 #include <string>
 #include <fstream>
-#include <unistd.h>//unitbuf
-#include <sys/wait.h>//Для waitpid
+#include <unistd.h>
+#include <sys/wait.h>
 #include <vector>
-#include<sstream>//Для iss
-#include<signal.h>//Работа с сигналами
-#include <cstdint>//Для uint32_t 
+#include <sstream>
+#include <signal.h>
+#include <cstring>
+#include <cstdint>
+#include <sys/stat.h>
+#include <cctype>
 
-#include "vfs.hpp"//Подключение VFS, в частности функция fuse_start
+// Подключаем твой VFS
+#include "vfs.hpp"
 
+// ========== ПУНКТ 9: Сигналы ==========
+volatile sig_atomic_t g_sighup_received = 0;
 
-//Функция для обработки сигнала
-void sighup_handler(int signal_nubmer)
+void sighup_handler(int signal_number)
 {
-    //Если получаем номер SIGHUP(обычно 1)
-    if (signal_nubmer == SIGHUP)
+    if (signal_number == SIGHUP)
     {
-        std::cout << "Configuration reloaded\n";
-        std::cout << "$ ";
+        g_sighup_received = 1;
     }
 }
 
-
-//  \l /dev/sda
+// ========== ПУНКТ 10: Анализ диска ==========
 void check_disk_partitions(const std::string& device_path)
 {
-    //Создание потока для чтения файла, device_path - путь к устройству (в нашем случае /dev/sda)
     std::ifstream device(device_path, std::ios::binary);
 
-    //Если ошибка открытия файла
     if (!device)
     {
         std::cout << "Error: Cannot open device " << device_path << "\n";
         return;
     }
 
-
-    //Буфер на 512 байт
     char sector[512];
-    //Читаем из нашего файла с диском первые 512 байт в буфер
     device.read(sector, 512);
 
-
-    //Если прочитали не 512 байт(например меньше) - ошибка чтения
     if (device.gcount() != 512)
     {
         std::cout << "Error: Cannot read disk\n";
         return;
     }
 
-    // Проверяем сигнатуру - 510 и 511 байты должны быть 0x55 и 0xAA соответственно, иначе это не MBR/GPT
+    // Проверяем сигнатуру MBR
     if ((unsigned char)sector[510] != 0x55 || (unsigned char)sector[511] != 0xAA)
     {
         std::cout << "Error: Invalid disk signature\n";
@@ -59,11 +54,8 @@ void check_disk_partitions(const std::string& device_path)
 
     // Определяем тип диска
     bool is_gpt = false;
-    //Идем начиная с 446 байта(начало таблицы разделов), всего 4 записи и каждая по 16 байт
-    //Нас интересует тип записи(4 байт в записи)
     for (int i = 0; i < 4; i++)
     {
-        //Если находим байт 0xEE это значит что он GPT Protective => это GPT
         if ((unsigned char)sector[446 + i * 16 + 4] == 0xEE)
         {
             is_gpt = true;
@@ -73,48 +65,35 @@ void check_disk_partitions(const std::string& device_path)
 
     if (!is_gpt)
     {
-        // MBR - простой вывод
+        // MBR
         for (int i = 0; i < 4; i++)
         {
-            //Начало каждого из 4 разделов считаем для каждого прохода цикла
             int offset = 446 + i * 16;
-
-            //Опять смотрим тип как в проверке на GPT
             unsigned char type = sector[offset + 4];
 
-            //Раздел не существует если тип равен нулю
-            if (type != 0) {
-                //uint32_t - это беззнаковое 32-битное целое число
-                //Читаем 12-15 байт раздела, отвечающий за количество секторов
-                //Берем их(4 байта) как 32 битное число с помощью    *(uint32_t*)&sector
+            if (type != 0)
+            {
                 uint32_t num_sectors = *(uint32_t*)&sector[offset + 12];
-                //1 сектор - 512 байт, в 1 MB 1024*1024 байт => 2048 секторов
                 uint32_t size_mb = num_sectors / 2048;
-                //Если первый байт равен 0x80 то bootable
                 bool bootable = ((unsigned char)sector[offset] == 0x80);
 
                 std::cout << "Partition " << (i + 1) << ": Size=" << size_mb << "MB, Bootable: ";
-                if (bootable)
-                    std::cout << "Yes\n";
-                else std::cout << "No\n";
+                std::cout << (bootable ? "Yes" : "No") << "\n";
             }
         }
     }
-
     else
     {
-        //  GPT - просто количество разделов
-        //Читаем из диска вторые 512 байт, в них хранится информация о GPT диске
+        // GPT
         device.read(sector, 512);
-        //Если прочли 512 (проверка как и раньше) и при этом байты 0-7 == "EFI PART"
-        if (device.gcount() == 512 && sector[0] == 'E' && sector[1] == 'F' && sector[2] == 'I' && sector[3] == ' ' && sector[4] == 'P' && sector[5] == 'A' &&
+        if (device.gcount() == 512 &&
+            sector[0] == 'E' && sector[1] == 'F' && sector[2] == 'I' &&
+            sector[3] == ' ' && sector[4] == 'P' && sector[5] == 'A' &&
             sector[6] == 'R' && sector[7] == 'T')
         {
-            //Также переходим к чтению 4 байтов начиная с 80, тут количество записей в таблице разделов
             uint32_t num_partitions = *(uint32_t*)&sector[80];
             std::cout << "GPT partitions: " << num_partitions << "\n";
         }
-
         else
         {
             std::cout << "GPT partitions: unknown\n";
@@ -122,66 +101,231 @@ void check_disk_partitions(const std::string& device_path)
     }
 }
 
+// ========== ПУНКТ 8: Внешние команды ==========
+void execute_external(const std::vector<std::string>& tokens)
+{
+    if (tokens.empty()) return;
+
+    pid_t pid = fork();
+
+    if (pid == 0)
+    {
+        // ГАРАНТИРУЕМ PATH в дочернем процессе
+        setenv("PATH", "/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin", 1);
+
+        std::vector<char*> args;
+        for (const auto& t : tokens)
+        {
+            args.push_back(const_cast<char*>(t.c_str()));
+        }
+        args.push_back(nullptr);
+
+        // Пробуем выполнить
+        execvp(args[0], args.data());
+
+        // Если не получилось - пробуем явные пути
+        std::string paths[] = { "/bin/", "/usr/bin/", "/usr/local/bin/" };
+        for (const auto& prefix : paths)
+        {
+            std::string full_path = prefix + tokens[0];
+            execv(full_path.c_str(), args.data());
+        }
+
+        std::cerr << tokens[0] << ": command not found\n";
+        exit(1);
+    }
+    else if (pid > 0)
+    {
+        int status;
+        waitpid(pid, &status, 0);
+    }
+    else
+    {
+        std::cerr << "Failed to create process\n";
+    }
+}
+
+// ========== ПУНКТ 5: Echo с раскрытием переменных ==========
+void execute_echo(const std::string& input)
+{
+    std::string text = input.substr(5); // Убираем "echo "
+    std::string result = "";
+
+    for (size_t i = 0; i < text.size(); i++)
+    {
+        if (text[i] == '$' && i + 1 < text.size())
+        {
+            // Извлекаем имя переменной
+            size_t start = i + 1;
+            size_t end = start;
+
+            while (end < text.size() &&
+                (isalnum(text[end]) || text[end] == '_'))
+            {
+                end++;
+            }
+
+            std::string var_name = text.substr(start, end - start);
+            const char* var_value = getenv(var_name.c_str());
+
+            if (var_value)
+            {
+                result += var_value;
+                i = end - 1;
+            }
+            else
+            {
+                result += text[i];
+            }
+        }
+        else
+        {
+            result += text[i];
+        }
+    }
+
+    std::cout << result << "\n";
+}
+
+// ========== ОСНОВНАЯ ФУНКЦИЯ ==========
 int main()
 {
-
     std::cout << std::unitbuf;
     std::cerr << std::unitbuf;
 
+    // ПУНКТ 9: Обработчик сигнала
+    struct sigaction sa;
+    sa.sa_handler = sighup_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    sigaction(SIGHUP, &sa, NULL);
 
+    // ГАРАНТИРУЕМ PATH
+    setenv("PATH", "/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin", 0);
 
-
+    // ПУНКТ 11: Запускаем VFS в отдельном потоке
+    std::cout << "[INFO] Starting Users VFS...\n";
     fuse_start();
+    sleep(1); // Даем время FUSE запуститься
 
-    std::cerr << "$ ";
-
-
-    //Сохранение пути в переменную для истории
     const char* home = std::getenv("HOME");
-    std::string historyPath = std::string(home) + "/.kubsh_history";
+    if (!home)
+    {
+        std::cerr << "ERROR: HOME environment variable not set\n";
+        return 1;
+    }
 
+    // Создаем символическую ссылку на /opt/users если нужно
+    std::string users_dir = "/opt/users";
+    struct stat st;
+    if (stat(users_dir.c_str(), &st) == -1) {
+        std::cout << "[INFO] VFS mounted at /opt/users\n";
+        std::cout << "[INFO] Access with: ls /opt/users/\n";
+    }
 
-
+    std::string history_path = std::string(home) + "/.kubsh_history";
     std::string input;
 
-    //Если приходит сигнал с номером SIGHUP то вызываем sighup_handler
-    signal(SIGHUP, sighup_handler);
-
-    while (std::getline(std::cin, input))
+    while (true)
     {
-        //Запись в историю
-        if (!input.empty())
+        // ПУНКТ 9: Проверка сигнала
+        if (g_sighup_received)
         {
-            std::ofstream history(historyPath, std::ios::app);//Открываем в режиме добавления
-            history << input << "\n";
+            std::cout << "\nConfiguration reloaded\n";
+            g_sighup_received = 0;
+            std::cout << "$ ";
+            fflush(stdout);
         }
 
+        // Приглашение
+        std::cout << "$ ";
 
-        //history
-        if (input == "history")
+        // Чтение ввода (пункт 2: выход по Ctrl+D)
+        if (!std::getline(std::cin, input))
         {
-            //Читаем из файла который в historyPath пока не закончатся строки
-            std::ifstream historyOutput(historyPath);
-            std::string line;
-            while (std::getline(historyOutput, line))
-            {
-                std::cout << line << "\n";
-            }
+            std::cout << "\n";
+            break;
         }
 
+        // Пропускаем пустые строки
+        if (input.empty())
+        {
+            continue;
+        }
 
-        //  \q
-        else if (input == "\\q")
+        // ПУНКТ 4: Сохраняем в историю
+        std::ofstream history_file(history_path, std::ios::app);
+        if (history_file.is_open())
+        {
+            history_file << input << "\n";
+            history_file.close();
+        }
+
+        // ========== ОБРАБОТКА КОМАНД ==========
+
+        // ПУНКТ 3: Выход
+        if (input == "\\q")
         {
             break;
         }
 
+        // ПУНКТ 4: История
+        if (input == "history")
+        {
+            std::ifstream history_output(history_path);
+            std::string line;
+            while (std::getline(history_output, line))
+            {
+                std::cout << line << "\n";
+            }
+            continue;
+        }
 
-        //  \l /dev/sda     (запускать через sudo)
-        else if (input.substr(0, 3) == "\\l ")
+        // ПУНКТ 5: Echo
+        if (input.find("echo ") == 0)
+        {
+            execute_echo(input);
+            continue;
+        }
+
+        // ПУНКТ 7: Переменные окружения
+        if (input.find("\\e $") == 0)
+        {
+            std::string var_name = input.substr(4);
+            const char* value = std::getenv(var_name.c_str());
+
+            if (value != nullptr)
+            {
+                std::string value_str = value;
+
+                if (value_str.find(':') != std::string::npos)
+                {
+                    std::stringstream ss(value_str);
+                    std::string part;
+                    while (std::getline(ss, part, ':'))
+                    {
+                        if (!part.empty())
+                        {
+                            std::cout << part << "\n";
+                        }
+                    }
+                }
+                else
+                {
+                    std::cout << value_str << "\n";
+                }
+            }
+            else
+            {
+                std::cout << var_name << ": не найдено\n";
+            }
+            continue;
+        }
+
+        // ПУНКТ 10: Анализ диска
+        if (input.substr(0, 3) == "\\l ")
         {
             std::string device_path = input.substr(3);
-            // Убираем возможные пробелы
             device_path.erase(0, device_path.find_first_not_of(" \t"));
             device_path.erase(device_path.find_last_not_of(" \t") + 1);
 
@@ -189,126 +333,41 @@ int main()
             {
                 std::cout << "Usage: \\l /dev/device_name (e.g., \\l /dev/sda)\n";
             }
-
             else
             {
                 check_disk_partitions(device_path);
             }
-        }
-
-        //  echo
-        //Если начинаем debug '
-        // заканчиваем ', считываем с открытия апострофа до закрытия
-        else if (input.substr(0, 7) == "debug '" && input[input.length() - 1] == '\'')
-        {
-
-            std::cout << input.substr(7, input.length() - 8) << std::endl;
-            continue;
-
-        }
-
-
-
-        //   \e $
-        else if (input.substr(0, 4) == "\\e $")
-        {
-            std::string varName = input.substr(4);
-            const char* value = std::getenv(varName.c_str());//Преобразуем C-строку в C++ строку
-
-            if (value != nullptr)
-            {
-                std::string valueStr = value;
-
-                bool has_colon = false;//Флаг для проверки наличия двоеточий
-                for (char c : valueStr)//Проходим по символам из строки
-                {
-                    if (c == ':')
-                    {
-                        has_colon = true;
-                        break;
-                    }
-                }
-
-                if (has_colon)
-                {
-                    std::string current_part = "";//Временная строка для накопления текущей части пути
-                    for (char c : valueStr)//Разбиваем строку по двоеточиям
-
-                    {
-                        if (c == ':')
-                        {
-                            std::cout << current_part << "\n";//Когда встречаем двоеточие - выводим накопленную часть
-                            current_part = "";//Сбрасываем временную строку для следующей части
-                        }
-                        else
-                        {
-                            current_part += c;//Иначе добавляем символ к строке
-
-                        }
-                    }
-                    std::cout << current_part << "\n";//Выводим последнюю часть (после последнего двоеточия)
-                }
-                else
-                {
-                    std::cout << valueStr << "\n";//Если двоеточий нет - просто выводим значение как есть
-                }
-            }
-            else
-            {
-                std::cout << varName << ": не найдено\n";
-            }
             continue;
         }
 
+        // Команда debug (из твоего кода)
+        if (input.size() >= 9 && input.substr(0, 7) == "debug '" && input.back() == '\'')
+        {
+            std::string text = input.substr(7, input.size() - 8);
+            std::cout << text << "\n";
+            continue;
+        }
+
+        // ПУНКТ 8: Внешние команды
+        std::vector<std::string> tokens;
+        std::stringstream iss(input);
+        std::string token;
+
+        while (iss >> token)
+        {
+            tokens.push_back(token);
+        }
+
+        if (!tokens.empty())
+        {
+            execute_external(tokens);
+        }
         else
         {
-            //Создаем процесс и записываем process id
-            pid_t pid = fork();
-
-            //Если дочерний процесс(в нем выполним бинарник)
-            if (pid == 0)
-            {
-                // Создаем копии строк для аргументов
-                std::vector<std::string> tokens;
-                //Указатели для execvp
-                std::vector<char*> args;
-                std::string token;
-                //Разбиваем по пробелам для аргументов
-                std::istringstream iss(input);
-
-                while (iss >> token)
-                {
-                    tokens.push_back(token);  // Сохраняем копии
-                }
-
-                // Преобразуем в char*
-                for (auto& t : tokens)
-                {
-                    args.push_back(const_cast<char*>(t.c_str()));
-                }
-                //Для execvp чтобы видел конец
-                args.push_back(nullptr);
-
-                //Заменяем программу на новую
-                //args[0] - название команды, args.data() - ссылка на C массив строк для аргументов
-                execvp(args[0], args.data());
-
-                //Если не нашли команду то выведет это(вернет управление), при успехе не дойдем до этих строк
-                std::cout << args[0] << ": command not found\n";
-                exit(1);
-
-            }
-            else if (pid > 0)
-            {
-                int status;
-                //Ожидаем дочерний
-                waitpid(pid, &status, 0);
-            }
-            else
-            {
-                std::cerr << "Failed to create process\n";
-            }
+            // ПУНКТ 6: Команда не найдена
+            std::cout << input << ": command not found\n";
         }
-        std::cout << "$ ";
     }
+
+    return 0;
 }
