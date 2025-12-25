@@ -7,7 +7,7 @@
 #include<sstream>//Для iss
 #include<signal.h>//Работа с сигналами
 #include <cstdint>//Для uint32_t 
-
+#include <sys/stat.h>
 #include "vfs.hpp"//Подключение VFS, в частности функция fuse_start
 
 using namespace std;
