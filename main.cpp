@@ -10,7 +10,7 @@
 #include<cstdint>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <vfs.hpp>
+#include "vfs.hpp"
 
 void analyze_disk(const std::string& device_path)
 {
@@ -204,13 +204,6 @@ int main()
     }
 
     setenv("PATH", "/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin", 0);
-
-    const char* home = std::getenv("HOME");
-    if (!home)
-    {
-        std::cerr << "ERROR: HOME environment variable not set\n";
-        return 1;
-    }
 
     const char* home = std::getenv("HOME");
     if (!home)
