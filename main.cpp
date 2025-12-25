@@ -7,40 +7,16 @@
 #include <sstream>
 #include <signal.h>
 #include <cstring>
-#include <sys/stat.h>
 
-// Глобальный флаг для сигнала SIGHUP
+// ========== ПУНКТ 9: Сигналы ==========
 volatile sig_atomic_t g_sighup_received = 0;
 
-// Обработчик сигнала SIGHUP
 void sighup_handler(int signal_number)
 {
     if (signal_number == SIGHUP)
     {
-        g_sighup_received = 1;
+        g_sighup_received = 1;  // ТОЛЬКО флаг, НЕ выводим здесь!
     }
-}
-
-// Функция для поиска команды в PATH
-std::string find_in_path(const std::string& command)
-{
-    char* path_env = getenv("PATH");
-    if (!path_env) return "";
-
-    std::string path_str = path_env;
-    std::stringstream path_stream(path_str);
-    std::string dir;
-
-    while (std::getline(path_stream, dir, ':'))
-    {
-        std::string full_path = dir + "/" + command;
-        if (access(full_path.c_str(), X_OK) == 0)
-        {
-            return full_path;
-        }
-    }
-
-    return "";
 }
 
 void execute_external(const std::vector<std::string>& tokens)
@@ -51,22 +27,26 @@ void execute_external(const std::vector<std::string>& tokens)
 
     if (pid == 0)
     {
+        // ДОЧЕРНИЙ ПРОЦЕСС: ГАРАНТИРУЕМ что PATH есть
+        setenv("PATH", "/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin", 1);
+
+        // Подготавливаем аргументы для execvp
         std::vector<char*> args;
         for (const auto& t : tokens)
         {
             args.push_back(const_cast<char*>(t.c_str()));
         }
-        args.push_back(nullptr);
+        args.push_back(nullptr);  // Конец массива
 
-        // Пробуем выполнить команду через execvp
         execvp(args[0], args.data());
 
-        // Если execvp не сработал, ищем команду в PATH
-        std::string full_path = find_in_path(tokens[0]);
-        if (!full_path.empty())
+        std::string explicit_paths[] = { "/bin/", "/usr/bin/", "/usr/local/bin/" };
+        for (const auto& path_prefix : explicit_paths)
         {
+            std::string full_path = path_prefix + tokens[0];
             execv(full_path.c_str(), args.data());
         }
+
         std::cerr << tokens[0] << ": command not found\n";
         exit(1);
     }
@@ -77,12 +57,11 @@ void execute_external(const std::vector<std::string>& tokens)
     }
     else
     {
-        std::cerr << "Failed to create process\n";
+        std::cerr << "Failed to create process (fork error)\n";
     }
 }
 
-// Функция для вывода переменной окружения
-void print_env_var(const std::string& var_name)
+void print_env_variable(const std::string& var_name)
 {
     const char* value = std::getenv(var_name.c_str());
 
@@ -96,7 +75,7 @@ void print_env_var(const std::string& var_name)
             std::string part;
             while (std::getline(ss, part, ':'))
             {
-                if (!part.empty()) 
+                if (!part.empty())
                 {
                     std::cout << part << "\n";
                 }
@@ -113,8 +92,7 @@ void print_env_var(const std::string& var_name)
     }
 }
 
-// Функция для вывода истории команд
-void show_history(const std::string& history_path)
+void show_command_history(const std::string& history_path)
 {
     std::ifstream history_file(history_path);
     if (!history_file.is_open())
@@ -123,23 +101,24 @@ void show_history(const std::string& history_path)
     }
 
     std::string line;
-    int line_num = 1;
+    int line_number = 1;
     while (std::getline(history_file, line))
     {
-        std::cout << line_num << "  " << line << "\n";
-        line_num++;
+        std::cout << line_number << "  " << line << "\n";
+        line_number++;
     }
     history_file.close();
 }
 
 int main()
 {
-    
     std::cout << std::unitbuf;
     std::cerr << std::unitbuf;
+
     signal(SIGHUP, sighup_handler);
 
-    
+    setenv("PATH", "/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin", 0);
+
     const char* home = std::getenv("HOME");
     if (!home)
     {
@@ -152,28 +131,22 @@ int main()
 
     while (true)
     {
-        // Проверяем, был ли получен сигнал SIGHUP
         if (g_sighup_received)
         {
             std::cout << "\nConfiguration reloaded\n";
             g_sighup_received = 0;
-            // Перерисовываем приглашение
             std::cout << "$ ";
             fflush(stdout);
         }
 
-       
         std::cout << "$ ";
 
-        
         if (!std::getline(std::cin, input))
         {
-            
             std::cout << "\n";
             break;
         }
 
-        
         if (input.empty())
         {
             continue;
@@ -193,30 +166,61 @@ int main()
 
         if (input == "history")
         {
-            show_history(history_path);
+            show_command_history(history_path);
             continue;
         }
 
- 
         if (input.find("echo ") == 0)
         {
             std::string text = input.substr(5);
-            std::cout << text << "\n";
+            std::string result = "";
+
+            for (size_t i = 0; i < text.size(); i++)
+            {
+                if (text[i] == '$' && i + 1 < text.size())
+                {
+                    size_t start = i + 1;
+                    size_t end = start;
+
+                    while (end < text.size() &&
+                        (isalnum(text[end]) || text[end] == '_'))
+                    {
+                        end++;
+                    }
+
+                    std::string var_name = text.substr(start, end - start);
+                    const char* var_value = getenv(var_name.c_str());
+
+                    if (var_value)
+                    {
+                        result += var_value;
+                        i = end - 1; 
+                    }
+                    else
+                    {
+                        result += text[i];
+                    }
+                }
+                else
+                {
+                    result += text[i];
+                }
+            }
+
+            std::cout << result << "\n";
+            continue;
+        }
+        if (input.find("\\e $") == 0)
+        {
+            std::string var_name = input.substr(4);
+            print_env_variable(var_name);
             continue;
         }
 
-        
         if (input.size() >= 9 && input.substr(0, 7) == "debug '" && input.back() == '\'')
         {
             std::string text = input.substr(7, input.size() - 8);
             std::cout << text << "\n";
-            continue;
-        }
-
-        if (input.find("\\e $") == 0)
-        {
-            std::string var_name = input.substr(4);
-            print_env_var(var_name);
             continue;
         }
 
