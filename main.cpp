@@ -7,13 +7,94 @@
 #include <sstream>
 #include <signal.h>
 #include <cstring>
+#include<cstdint>
+#include <sys/stat.h>
+#include <fcntl.h>
+
+void analyze_disk(const std::string& device_path)
+{
+    std::ifstream device(device_path, std::ios::binary);
+
+    if (!device)
+    {
+        std::cout << "Error: Cannot open device " << device_path << " (need root?)\n";
+        return;
+    }
+
+    char sector[512];
+    device.read(sector, 512);
+
+    if (device.gcount() != 512)
+    {
+        std::cout << "Error: Cannot read disk\n";
+        return;
+    }
+
+    if ((unsigned char)sector[510] != 0x55 || (unsigned char)sector[511] != 0xAA)
+    {
+        std::cout << "Error: Invalid disk signature (not MBR/GPT)\n";
+        return;
+    }
+
+    bool is_gpt = false;
+    for (int i = 0; i < 4; i++)
+    {
+        if ((unsigned char)sector[446 + i * 16 + 4] == 0xEE)
+        {
+            is_gpt = true;
+            break;
+        }
+    }
+
+    std::cout << "Device: " << device_path << "\n";
+    std::cout << "Type: " << (is_gpt ? "GPT" : "MBR") << "\n";
+
+    if (!is_gpt)
+    {
+        std::cout << "MBR Partitions:\n";
+        for (int i = 0; i < 4; i++)
+        {
+            int offset = 446 + i * 16;
+            unsigned char type = sector[offset + 4];
+
+            if (type != 0)
+            {
+                uint32_t num_sectors = *(uint32_t*)&sector[offset + 12];
+                uint32_t size_mb = num_sectors / 2048; 
+                bool bootable = ((unsigned char)sector[offset] == 0x80);
+
+                std::cout << "  Partition " << (i + 1) << ": ";
+                std::cout << "Size=" << size_mb << "MB, ";
+                std::cout << "Type=0x" << std::hex << (int)type << std::dec << ", ";
+                std::cout << "Bootable=" << (bootable ? "Yes" : "No") << "\n";
+            }
+        }
+    }
+    else
+    {
+        device.read(sector, 512);
+        if (device.gcount() == 512 &&
+            sector[0] == 'E' && sector[1] == 'F' && sector[2] == 'I' &&
+            sector[3] == ' ' && sector[4] == 'P' && sector[5] == 'A' &&
+            sector[6] == 'R' && sector[7] == 'T')
+        {
+            uint32_t num_partitions = *(uint32_t*)&sector[80];
+            std::cout << "GPT Partitions: " << num_partitions << "\n";
+        }
+        else
+        {
+            std::cout << "GPT Partitions: unknown\n";
+        }
+    }
+}
 volatile sig_atomic_t g_sighup_received = 0;
 
 void sighup_handler(int signal_number)
 {
     if (signal_number == SIGHUP)
     {
-        g_sighup_received = 1;  // ТОЛЬКО флаг, НЕ выводим здесь!
+        write(STDOUT_FILENO, "\nConfiguration reloaded\n", 24);
+        g_sighup_received = 1;
     }
 }
 
@@ -25,16 +106,14 @@ void execute_external(const std::vector<std::string>& tokens)
 
     if (pid == 0)
     {
-        // ДОЧЕРНИЙ ПРОЦЕСС: ГАРАНТИРУЕМ что PATH есть
         setenv("PATH", "/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin", 1);
 
-        // Подготавливаем аргументы для execvp
         std::vector<char*> args;
         for (const auto& t : tokens)
         {
             args.push_back(const_cast<char*>(t.c_str()));
         }
-        args.push_back(nullptr);  // Конец массива
+        args.push_back(nullptr); 
 
         execvp(args[0], args.data());
 
@@ -221,6 +300,24 @@ int main()
         {
             std::string var_name = input.substr(4);
             print_env_variable(var_name);
+            continue;
+        }
+
+        if (input.substr(0, 3) == "\\l ")
+        {
+            std::string device = input.substr(3);
+          
+            device.erase(0, device.find_first_not_of(" \t"));
+            device.erase(device.find_last_not_of(" \t") + 1);
+
+            if (device.empty())
+            {
+                std::cout << "Usage: \\l /dev/device_name (e.g., \\l /dev/sda)\n";
+            }
+            else
+            {
+                analyze_disk(device);
+            }
             continue;
         }
 
