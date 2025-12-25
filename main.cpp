@@ -7,8 +7,6 @@
 #include <sstream>
 #include <signal.h>
 #include <cstring>
-
-// ========== ПУНКТ 9: Сигналы ==========
 volatile sig_atomic_t g_sighup_received = 0;
 
 void sighup_handler(int signal_number)
@@ -115,7 +113,15 @@ int main()
     std::cout << std::unitbuf;
     std::cerr << std::unitbuf;
 
-    signal(SIGHUP, sighup_handler);
+    struct sigaction sa;
+    sa.sa_handler = sighup_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;  
+
+    if (sigaction(SIGHUP, &sa, NULL) == -1)
+    {
+        std::cerr << "Warning: Failed to set SIGHUP handler\n";
+    }
 
     setenv("PATH", "/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin", 0);
 
@@ -140,6 +146,7 @@ int main()
         }
 
         std::cout << "$ ";
+        fflush(stdout);
 
         if (!std::getline(std::cin, input))
         {
@@ -194,7 +201,7 @@ int main()
                     if (var_value)
                     {
                         result += var_value;
-                        i = end - 1; 
+                        i = end - 1;
                     }
                     else
                     {
