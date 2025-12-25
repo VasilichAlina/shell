@@ -10,6 +10,7 @@
 #include<cstdint>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <vfs.hpp>
 
 void analyze_disk(const std::string& device_path)
 {
@@ -209,6 +210,49 @@ int main()
     {
         std::cerr << "ERROR: HOME environment variable not set\n";
         return 1;
+    }
+
+    const char* home = std::getenv("HOME");
+    if (!home)
+    {
+        std::cerr << "ERROR: HOME environment variable not set\n";
+        return 1;
+    }
+
+    std::string users_dir = std::string(home) + "/users";
+
+    std::cout << "[INFO] Creating users VFS at: " << users_dir << "\n";
+
+    mkdir(users_dir.c_str(), 0755);
+
+    std::ifstream passwd("/etc/passwd");
+    std::string line;
+
+    while (std::getline(passwd, line))
+    {
+        std::stringstream ss(line);
+        std::vector<std::string> parts;
+        std::string part;
+
+        while (std::getline(ss, part, ':'))
+        {
+            parts.push_back(part);
+        }
+
+        if (parts.size() >= 7)
+        {
+            std::string username = parts[0];
+            std::string uid = parts[2];
+            std::string homedir = parts[5];
+            std::string shell = parts[6];
+
+            std::string user_dir = users_dir + "/" + username;
+            mkdir(user_dir.c_str(), 0755);
+
+            std::ofstream(user_dir + "/id") << uid << "\n";
+            std::ofstream(user_dir + "/home") << homedir << "\n";
+            std::ofstream(user_dir + "/shell") << shell << "\n";
+        }
     }
 
     std::string history_path = std::string(home) + "/.kubsh_history";
