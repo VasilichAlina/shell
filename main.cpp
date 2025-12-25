@@ -216,37 +216,35 @@ int main()
 
     std::cout << "[INFO] Creating users VFS at: " << users_dir << "\n";
 
-    mkdir(users_dir.c_str(), 0755);
-
-    std::ifstream passwd("/etc/passwd");
-    std::string line;
-
-    while (std::getline(passwd, line))
-    {
-        std::stringstream ss(line);
-        std::vector<std::string> parts;
-        std::string part;
-
-        while (std::getline(ss, part, ':'))
-        {
-            parts.push_back(part);
+    start_users_vfs(users_dir);
+    DIR* dir = opendir(users_dir.c_str());
+    if (dir) {
+        int file_count = 0;
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != NULL) {
+            if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+                file_count++;
+            }
         }
+        closedir(dir);
 
-        if (parts.size() >= 7)
-        {
-            std::string username = parts[0];
-            std::string uid = parts[2];
-            std::string homedir = parts[5];
-            std::string shell = parts[6];
+        if (file_count == 0) {
+            cout << "[INFO] Creating sample user structure..." << endl;
 
-            std::string user_dir = users_dir + "/" + username;
-            mkdir(user_dir.c_str(), 0755);
+            struct passwd* pw = getpwuid(getuid());
+            if (pw) {
+                string user_dir = users_dir + "/" + string(pw->pw_name);
+                mkdir(user_dir.c_str(), 0755);
 
-            std::ofstream(user_dir + "/id") << uid << "\n";
-            std::ofstream(user_dir + "/home") << homedir << "\n";
-            std::ofstream(user_dir + "/shell") << shell << "\n";
+                ofstream(user_dir + "/id") << pw->pw_uid << endl;
+                ofstream(user_dir + "/home") << pw->pw_dir << endl;
+                ofstream(user_dir + "/shell") << pw->pw_shell << endl;
+
+                cout << "[INFO] Created entry for user: " << pw->pw_name << endl;
+            }
         }
     }
+
 
     std::string history_path = std::string(home) + "/.kubsh_history";
     std::string input;
