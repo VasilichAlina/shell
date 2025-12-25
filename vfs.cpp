@@ -41,11 +41,6 @@ static void update_users_cache() {
     endpwent();
 }
 
-static std::string get_vfs_path(const char* path) {
-    return vfs_base_path + path;
-}
-
-
 static int vfs_getattr(const char* path, struct stat* stbuf, struct fuse_file_info* fi) {
     (void)fi;
     memset(stbuf, 0, sizeof(struct stat));
@@ -70,7 +65,7 @@ static int vfs_getattr(const char* path, struct stat* stbuf, struct fuse_file_in
     else {
         stbuf->st_mode = S_IFREG | 0444;
         stbuf->st_nlink = 1;
-        stbuf->st_size = 1024; 
+        stbuf->st_size = 1024;
         stbuf->st_uid = getuid();
         stbuf->st_gid = getgid();
     }
@@ -118,7 +113,7 @@ static int vfs_read(const char* path, char* buf, size_t size, off_t offset,
     size_t slash_pos = full_path.find('/', 1);
 
     if (slash_pos == std::string::npos) {
-        return -EISDIR; 
+        return -EISDIR;
     }
 
     std::string username = full_path.substr(1, slash_pos - 1);
@@ -186,14 +181,17 @@ static int vfs_rmdir(const char* path) {
     }
 }
 
-static struct fuse_operations vfs_oper = {
-    .getattr = vfs_getattr,
-    .readdir = vfs_readdir,
-    .open = vfs_open,
-    .read = vfs_read,
-    .mkdir = vfs_mkdir,
-    .rmdir = vfs_rmdir,
-};
+static struct fuse_operations vfs_oper;
+
+static void init_vfs_operations() {
+    memset(&vfs_oper, 0, sizeof(vfs_oper));
+    vfs_oper.getattr = vfs_getattr;
+    vfs_oper.readdir = vfs_readdir;
+    vfs_oper.open = vfs_open;
+    vfs_oper.read = vfs_read;
+    vfs_oper.mkdir = vfs_mkdir;
+    vfs_oper.rmdir = vfs_rmdir;
+}
 
 void start_users_vfs(const std::string& mount_point) {
     vfs_base_path = mount_point;
@@ -202,11 +200,13 @@ void start_users_vfs(const std::string& mount_point) {
 
     const char* fuse_argv[] = {
         "users_vfs",
-        "-f",           
-        "-s",          
+        "-f",
+        "-s",
         mount_point.c_str()
     };
     int fuse_argc = sizeof(fuse_argv) / sizeof(fuse_argv[0]);
+
+    init_vfs_operations();
 
     pid_t pid = fork();
     if (pid == 0) {
@@ -214,7 +214,7 @@ void start_users_vfs(const std::string& mount_point) {
         exit(0);
     }
     else if (pid > 0) {
-        sleep(1); 
+        sleep(1);
         std::cout << "[VFS] Users filesystem mounted at: " << mount_point << "\n";
     }
 }
