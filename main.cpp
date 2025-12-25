@@ -10,18 +10,13 @@
 
 #include "vfs.hpp"//Подключение VFS, в частности функция fuse_start
 
-
-//Функция для обработки сигнала
-void sighup_handler(int signal_nubmer)
-{
-    //Если получаем номер SIGHUP(обычно 1)
-    if (signal_nubmer == SIGHUP)
-    {
-        std::cout << "Configuration reloaded\n";
-        std::cout << "$ ";
+using namespace std;
+void sighup_handler(int signal_number) {
+    if (signal_number == SIGHUP) {
+        cout << "\nConfiguration reloaded\n";
+        cout << "$ ";
     }
 }
-
 
 //  \l /dev/sda
 void check_disk_partitions(const std::string& device_path)
@@ -125,190 +120,197 @@ void check_disk_partitions(const std::string& device_path)
 int main()
 {
 
-    std::cout << std::unitbuf;
-    std::cerr << std::unitbuf;
+    cout << unitbuf;
+    cerr << unitbuf;
 
+    const char* home = getenv("HOME");
+    if (!home) {
+        cerr << "ERROR: HOME environment variable not set\n";
+        return 1;
+    }
 
+    string users_dir = string(home) + "/users";
+    cout << "[INFO] Creating users VFS at: " << users_dir << "\n";
 
+    // Запускаем VFS
+    start_users_vfs(users_dir);
 
-    fuse_start();
+    // ПРОВЕРКА: если VFS не создал директорию, создаем вручную
+    struct stat st;
+    if (stat(users_dir.c_str(), &st) == -1) {
+        cerr << "[WARNING] VFS failed, creating directory manually...\n";
+        mkdir(users_dir.c_str(), 0755);
 
-    std::cerr << "$ ";
+        // Создаем тестового пользователя
+        string test_dir = users_dir + "/testuser";
+        mkdir(test_dir.c_str(), 0755);
 
+        ofstream id_file(test_dir + "/id");
+        id_file << "1000\n";
+        id_file.close();
 
-    //Сохранение пути в переменную для истории
-    const char* home = std::getenv("HOME");
-    std::string historyPath = std::string(home) + "/.kubsh_history";
+        ofstream home_file(test_dir + "/home");
+        home_file << "/home/testuser\n";
+        home_file.close();
 
+        ofstream shell_file(test_dir + "/shell");
+        shell_file << "/bin/bash\n";
+        shell_file.close();
+    }
 
+    struct sigaction sa;
+    sa.sa_handler = sighup_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
 
-    std::string input;
+    if (sigaction(SIGHUP, &sa, NULL) == -1) {
+        cerr << "Warning: Failed to set SIGHUP handler\n";
+    }
 
-    //Если приходит сигнал с номером SIGHUP то вызываем sighup_handler
-    signal(SIGHUP, sighup_handler);
+    cout << "$ ";
 
-    while (std::getline(std::cin, input))
-    {
-        //Запись в историю
-        if (!input.empty())
-        {
-            std::ofstream history(historyPath, std::ios::app);//Открываем в режиме добавления
-            history << input << "\n";
-        }
+    string historyPath = string(home) + "/.kubsh_history";
+    string input;
 
-
-        //history
-        if (input == "history")
-        {
-            //Читаем из файла который в historyPath пока не закончатся строки
-            std::ifstream historyOutput(historyPath);
-            std::string line;
-            while (std::getline(historyOutput, line))
-            {
-                std::cout << line << "\n";
+    // ИЗМЕНЕНИЕ: Проверка на Ctrl+D (EOF)
+    while (getline(cin, input)) {
+        // Запись в историю
+        if (!input.empty()) {
+            ofstream history(historyPath, ios::app);
+            if (history.is_open()) {
+                history << input << "\n";
+                history.close();
             }
         }
 
+        // history
+        if (input == "history") {
+            ifstream historyOutput(historyPath);
+            string line;
+            while (getline(historyOutput, line)) {
+                cout << line << "\n";
+            }
+            cout << "$ ";
+            continue;
+        }
 
-        //  \q
-        else if (input == "\\q")
-        {
+        // \q
+        else if (input == "\\q") {
             break;
         }
 
-
-        //  \l /dev/sda     (запускать через sudo)
-        else if (input.substr(0, 3) == "\\l ")
-        {
-            std::string device_path = input.substr(3);
-            // Убираем возможные пробелы
+        // \l /dev/sda
+        else if (input.substr(0, 3) == "\\l ") {
+            string device_path = input.substr(3);
             device_path.erase(0, device_path.find_first_not_of(" \t"));
             device_path.erase(device_path.find_last_not_of(" \t") + 1);
 
-            if (device_path.empty())
-            {
-                std::cout << "Usage: \\l /dev/device_name (e.g., \\l /dev/sda)\n";
+            if (device_path.empty()) {
+                cout << "Usage: \\l /dev/device_name (e.g., \\l /dev/sda)\n";
             }
-
-            else
-            {
+            else {
                 check_disk_partitions(device_path);
             }
-        }
-
-        //  echo
-        //Если начинаем debug '
-        // заканчиваем ', считываем с открытия апострофа до закрытия
-        else if (input.substr(0, 7) == "debug '" && input[input.length() - 1] == '\'')
-        {
-
-            std::cout << input.substr(7, input.length() - 8) << std::endl;
+            cout << "$ ";
             continue;
-
         }
 
+        // echo (debug)
+        else if (input.substr(0, 7) == "debug '" && input[input.length() - 1] == '\'') {
+            cout << input.substr(7, input.length() - 8) << endl;
+            cout << "$ ";
+            continue;
+        }
 
+        // \e $
+        else if (input.substr(0, 4) == "\\e $") {
+            string varName = input.substr(4);
+            const char* value = getenv(varName.c_str());
 
-        //   \e $
-        else if (input.substr(0, 4) == "\\e $")
-        {
-            std::string varName = input.substr(4);
-            const char* value = std::getenv(varName.c_str());//Преобразуем C-строку в C++ строку
+            if (value != nullptr) {
+                string valueStr = value;
+                bool has_colon = false;
 
-            if (value != nullptr)
-            {
-                std::string valueStr = value;
-
-                bool has_colon = false;//Флаг для проверки наличия двоеточий
-                for (char c : valueStr)//Проходим по символам из строки
-                {
-                    if (c == ':')
-                    {
+                for (char c : valueStr) {
+                    if (c == ':') {
                         has_colon = true;
                         break;
                     }
                 }
 
-                if (has_colon)
-                {
-                    std::string current_part = "";//Временная строка для накопления текущей части пути
-                    for (char c : valueStr)//Разбиваем строку по двоеточиям
-
-                    {
-                        if (c == ':')
-                        {
-                            std::cout << current_part << "\n";//Когда встречаем двоеточие - выводим накопленную часть
-                            current_part = "";//Сбрасываем временную строку для следующей части
+                if (has_colon) {
+                    string current_part = "";
+                    for (char c : valueStr) {
+                        if (c == ':') {
+                            cout << current_part << "\n";
+                            current_part = "";
                         }
-                        else
-                        {
-                            current_part += c;//Иначе добавляем символ к строке
-
+                        else {
+                            current_part += c;
                         }
                     }
-                    std::cout << current_part << "\n";//Выводим последнюю часть (после последнего двоеточия)
+                    cout << current_part << "\n";
                 }
-                else
-                {
-                    std::cout << valueStr << "\n";//Если двоеточий нет - просто выводим значение как есть
+                else {
+                    cout << valueStr << "\n";
                 }
             }
-            else
-            {
-                std::cout << varName << ": не найдено\n";
+            else {
+                cout << varName << ": не найдено\n";
             }
+            cout << "$ ";
             continue;
         }
 
-        else
-        {
-            //Создаем процесс и записываем process id
+        // Выполнение внешних команд
+        else {
             pid_t pid = fork();
 
-            //Если дочерний процесс(в нем выполним бинарник)
-            if (pid == 0)
-            {
-                // Создаем копии строк для аргументов
-                std::vector<std::string> tokens;
-                //Указатели для execvp
-                std::vector<char*> args;
-                std::string token;
-                //Разбиваем по пробелам для аргументов
-                std::istringstream iss(input);
+            if (pid == 0) {
+                // Устанавливаем PATH
+                setenv("PATH", "/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin", 1);
 
-                while (iss >> token)
-                {
-                    tokens.push_back(token);  // Сохраняем копии
+                vector<string> tokens;
+                vector<char*> args;
+                string token;
+                istringstream iss(input);
+
+                while (iss >> token) {
+                    tokens.push_back(token);
                 }
 
-                // Преобразуем в char*
-                for (auto& t : tokens)
-                {
+                for (auto& t : tokens) {
                     args.push_back(const_cast<char*>(t.c_str()));
                 }
-                //Для execvp чтобы видел конец
                 args.push_back(nullptr);
 
-                //Заменяем программу на новую
-                //args[0] - название команды, args.data() - ссылка на C массив строк для аргументов
+                // Пробуем выполнить
                 execvp(args[0], args.data());
 
-                //Если не нашли команду то выведет это(вернет управление), при успехе не дойдем до этих строк
-                std::cout << args[0] << ": command not found\n";
-                exit(1);
+                // Если не получилось, пробуем явные пути
+                string explicit_paths[] = { "/bin/", "/usr/bin/", "/usr/local/bin/" };
+                for (const auto& path_prefix : explicit_paths) {
+                    string full_path = path_prefix + tokens[0];
+                    execv(full_path.c_str(), args.data());
+                }
 
+                cout << args[0] << ": command not found\n";
+                exit(1);
             }
-            else if (pid > 0)
-            {
+            else if (pid > 0) {
                 int status;
-                //Ожидаем дочерний
                 waitpid(pid, &status, 0);
             }
-            else
-            {
-                std::cerr << "Failed to create process\n";
+            else {
+                cerr << "Failed to create process\n";
             }
         }
-        std::cout << "$ ";
+        cout << "$ ";
     }
+
+    // Выводим новую строку при выходе по Ctrl+D
+    cout << "\n";
+
+    stop_users_vfs();
+    return 0;
 }
