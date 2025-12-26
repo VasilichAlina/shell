@@ -21,7 +21,7 @@ jobs:
         token: ${{ secrets.PAT_TOKEN }}
 
     - name: Pull Docker image
-      run: docker pull tyvik_:master
+      run: docker pull ghcr.io/xardb/kubshfuse:master
 
     - name: Build package in container
       run: |
