@@ -28,7 +28,7 @@ jobs:
         docker run --rm \
         -v $PWD:/mnt \
         -w /mnt \
-        tyvik/kubsh_test:master \
+        ghcr.io/xardb/kubshfuse:master \
         make deb
 
     - name: Run tests in container
@@ -38,7 +38,7 @@ jobs:
           --device /dev/fuse \
           --cap-add SYS_ADMIN \
           --security-opt apparmor:unconfined \
-          tyvik/kubsh_test:master
+          ghcr.io/xardb/kubshfuse:master
 
     - name: Verify kubsh.deb exists
       run: |
