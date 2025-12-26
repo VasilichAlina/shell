@@ -18,7 +18,7 @@ jobs:
       with:
         repository: VasilichAlina/Shell
         # Если репозиторий приватный, добавьте токен:
-        # token: ${{ secrets.PAT_TOKEN }}
+        token: ${{ secrets.PAT_TOKEN }}
 
     - name: Pull Docker image
       run: docker pull tyvik_:master
